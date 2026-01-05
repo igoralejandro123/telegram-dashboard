@@ -231,10 +231,6 @@ def dashboard():
     """
 
 
-app = Flask(__name__)
-
-
-# NÃO COLOQUE app.run()
 
 
 
