@@ -1,7 +1,6 @@
-python-telegram-bot==13.15
-mercadopago==2.2.1
-psycopg2-binary
 flask
+psycopg2-binary
+
 
 
 
