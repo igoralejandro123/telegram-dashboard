@@ -41,7 +41,10 @@ def criar_tabelas():
 
 
 def get_db_connection():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL não definido no serviço do DASHBOARD")
     return psycopg2.connect(DATABASE_URL)
+
 
 @app.route("/", methods=["GET", "POST"])
 def dashboard():
@@ -261,6 +264,7 @@ def dashboard():
     </body>
     </html>
     """
+
 
 
 
