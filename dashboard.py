@@ -48,7 +48,6 @@ def get_db_connection():
 
 @app.route("/", methods=["GET", "POST"])
 def dashboard():
-    criar_tabelas()
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -265,6 +264,10 @@ def dashboard():
     </html>
     """
 
+
+if __name__ == "__main__":
+    criar_tabelas()
+    app.run(host="0.0.0.0", port=8080)
 
 
 
