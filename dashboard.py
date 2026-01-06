@@ -7,6 +7,7 @@ from flask import Flask, request, redirect
 app = Flask(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+
 def criar_tabelas():
     conn = get_db_connection()
     cur = conn.cursor()
@@ -38,8 +39,6 @@ def criar_tabelas():
     conn.close()
 
 
-
-
 def get_db_connection():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL não definido no serviço do DASHBOARD")
@@ -50,6 +49,9 @@ def get_db_connection():
 def dashboard():
     conn = get_db_connection()
     cur = conn.cursor()
+
+    # 🔹 NOVO: data selecionada (opcional)
+    filtro_data = request.args.get("filtro_data")
 
     # =========================
     # SALVAR GASTOS
@@ -67,71 +69,115 @@ def dashboard():
         conn.commit()
         return redirect("/")
 
-
     # =========================
     # MÉTRICAS DO BOT
     # =========================
-    cur.execute("SELECT COUNT(DISTINCT user_id) FROM events")
-    usuarios = cur.fetchone()[0]
+    if filtro_data:
+        cur.execute("SELECT COUNT(DISTINCT user_id) FROM events WHERE DATE(created_at) = %s", (filtro_data,))
+        usuarios = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM events WHERE event = 'plan_click'")
-    cliques = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'plan_click' AND DATE(created_at) = %s", (filtro_data,))
+        cliques = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM events WHERE event = 'purchase'")
-    compras = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'purchase' AND DATE(created_at) = %s", (filtro_data,))
+        compras = cur.fetchone()[0]
 
-    cur.execute("SELECT COALESCE(SUM(valor), 0) FROM events WHERE event = 'purchase'")
-    faturamento_total = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COALESCE(SUM(valor), 0)
+            FROM events
+            WHERE event = 'purchase' AND DATE(created_at) = %s
+        """, (filtro_data,))
+        faturamento_total = cur.fetchone()[0]
 
-    cur.execute("""
-        SELECT COALESCE(SUM(valor), 0)
-        FROM events
-        WHERE event = 'purchase'
-        AND DATE(created_at) = CURRENT_DATE
-    """)
-    faturamento_hoje = cur.fetchone()[0]
+        faturamento_hoje = faturamento_total
+        faturamento_mes = faturamento_total
+    else:
+        cur.execute("SELECT COUNT(DISTINCT user_id) FROM events")
+        usuarios = cur.fetchone()[0]
 
-    cur.execute("""
-        SELECT COALESCE(SUM(valor), 0)
-        FROM events
-        WHERE event = 'purchase'
-        AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
-    """)
-    faturamento_mes = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'plan_click'")
+        cliques = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'purchase'")
+        compras = cur.fetchone()[0]
+
+        cur.execute("SELECT COALESCE(SUM(valor), 0) FROM events WHERE event = 'purchase'")
+        faturamento_total = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(SUM(valor), 0)
+            FROM events
+            WHERE event = 'purchase'
+            AND DATE(created_at) = CURRENT_DATE
+        """)
+        faturamento_hoje = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(SUM(valor), 0)
+            FROM events
+            WHERE event = 'purchase'
+            AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        """)
+        faturamento_mes = cur.fetchone()[0]
 
     # =========================
     # FINANCEIRO DIÁRIO
     # =========================
-    cur.execute("""
-        SELECT 
-            d.data,
-            COALESCE(f.faturamento, 0),
-            COALESCE(g.facebook, 0),
-            COALESCE(g.outros, 0)
-        FROM (
-            SELECT DISTINCT DATE(created_at) AS data FROM events
-            UNION
-            SELECT DISTINCT data FROM gastos
-        ) d
-        LEFT JOIN (
-            SELECT DATE(created_at) AS data, SUM(valor) AS faturamento
-            FROM events
-            WHERE event = 'purchase'
-            GROUP BY DATE(created_at)
-        ) f ON f.data = d.data
-        LEFT JOIN (
-            SELECT data,
-                SUM(CASE WHEN tipo = 'facebook' THEN valor ELSE 0 END) AS facebook,
-                SUM(CASE WHEN tipo = 'outros' THEN valor ELSE 0 END) AS outros
-            FROM gastos
-            GROUP BY data
-        ) g ON g.data = d.data
-        ORDER BY d.data DESC
-        LIMIT 30
-    """)
+    if filtro_data:
+        cur.execute("""
+            SELECT 
+                d.data,
+                COALESCE(f.faturamento, 0),
+                COALESCE(g.facebook, 0),
+                COALESCE(g.outros, 0)
+            FROM (
+                SELECT %s::date AS data
+            ) d
+            LEFT JOIN (
+                SELECT DATE(created_at) AS data, SUM(valor) AS faturamento
+                FROM events
+                WHERE event = 'purchase' AND DATE(created_at) = %s
+                GROUP BY DATE(created_at)
+            ) f ON f.data = d.data
+            LEFT JOIN (
+                SELECT data,
+                    SUM(CASE WHEN tipo = 'facebook' THEN valor ELSE 0 END) AS facebook,
+                    SUM(CASE WHEN tipo = 'outros' THEN valor ELSE 0 END) AS outros
+                FROM gastos
+                WHERE data = %s
+                GROUP BY data
+            ) g ON g.data = d.data
+        """, (filtro_data, filtro_data, filtro_data))
+    else:
+        cur.execute("""
+            SELECT 
+                d.data,
+                COALESCE(f.faturamento, 0),
+                COALESCE(g.facebook, 0),
+                COALESCE(g.outros, 0)
+            FROM (
+                SELECT DISTINCT DATE(created_at) AS data FROM events
+                UNION
+                SELECT DISTINCT data FROM gastos
+            ) d
+            LEFT JOIN (
+                SELECT DATE(created_at) AS data, SUM(valor) AS faturamento
+                FROM events
+                WHERE event = 'purchase'
+                GROUP BY DATE(created_at)
+            ) f ON f.data = d.data
+            LEFT JOIN (
+                SELECT data,
+                    SUM(CASE WHEN tipo = 'facebook' THEN valor ELSE 0 END) AS facebook,
+                    SUM(CASE WHEN tipo = 'outros' THEN valor ELSE 0 END) AS outros
+                FROM gastos
+                GROUP BY data
+            ) g ON g.data = d.data
+            ORDER BY d.data DESC
+            LIMIT 30
+        """)
 
     financeiro = cur.fetchall()
-
     cur.close()
     conn.close()
 
@@ -173,7 +219,6 @@ def dashboard():
                 padding:30px;
             }}
             h1 {{ margin-bottom:30px; }}
-
             .cards {{
                 display:grid;
                 grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
@@ -184,16 +229,8 @@ def dashboard():
                 padding:20px;
                 border-radius:12px;
             }}
-            .card h2 {{
-                color:#aaa;
-                font-size:14px;
-            }}
-            .card p {{
-                font-size:28px;
-                margin:10px 0 0;
-                font-weight:bold;
-            }}
-
+            .card h2 {{ color:#aaa; font-size:14px; }}
+            .card p {{ font-size:28px; margin:10px 0 0; font-weight:bold; }}
             form {{
                 background:#1c1c22;
                 padding:20px;
@@ -206,11 +243,7 @@ def dashboard():
                 border-radius:6px;
                 border:none;
             }}
-            button {{
-                background:#22c55e;
-                font-weight:bold;
-            }}
-
+            button {{ background:#22c55e; font-weight:bold; }}
             table {{
                 width:100%;
                 border-collapse:collapse;
@@ -226,6 +259,13 @@ def dashboard():
     <body>
         <div class="container">
             <h1>📊 Dashboard — Bot Telegram VIP</h1>
+
+            <!-- 🔹 NOVO: filtro de data -->
+            <form method="get">
+                <input type="date" name="filtro_data" value="{filtro_data or ''}">
+                <button>Filtrar</button>
+                <a href="/" style="color:#aaa;margin-left:10px;">Limpar</a>
+            </form>
 
             <div class="cards">
                 <div class="card"><h2>Usuários</h2><p>{usuarios}</p></div>
@@ -268,13 +308,3 @@ def dashboard():
 if __name__ == "__main__":
     criar_tabelas()
     app.run(host="0.0.0.0", port=8080)
-
-
-
-
-
-
-
-
-
-
