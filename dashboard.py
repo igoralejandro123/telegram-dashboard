@@ -7,6 +7,37 @@ from flask import Flask, request, redirect
 app = Flask(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+def criar_tabelas():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            event VARCHAR(50),
+            plano VARCHAR(50),
+            valor NUMERIC,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gastos (
+            id SERIAL PRIMARY KEY,
+            data DATE NOT NULL,
+            tipo VARCHAR(20),
+            valor NUMERIC NOT NULL,
+            descricao TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 
 
 def get_db_connection():
@@ -14,6 +45,7 @@ def get_db_connection():
 
 @app.route("/", methods=["GET", "POST"])
 def dashboard():
+    criar_tabelas()
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -229,6 +261,7 @@ def dashboard():
     </body>
     </html>
     """
+
 
 
 
