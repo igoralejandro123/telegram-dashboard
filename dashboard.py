@@ -50,9 +50,8 @@ def dashboard():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # 🔹 NOVO: intervalo de datas
-    data_inicio = request.args.get("data_inicio")
-    data_fim = request.args.get("data_fim")
+    # 🔹 NOVO: data selecionada (opcional)
+    filtro_data = request.args.get("filtro_data")
 
     # =========================
     # SALVAR GASTOS
@@ -71,53 +70,60 @@ def dashboard():
         return redirect("/")
 
     # =========================
-    # CONDIÇÃO DE DATA
+    # MÉTRICAS DO BOT
     # =========================
-    filtro_sql = ""
-    params = []
+    if filtro_data:
+        cur.execute("SELECT COUNT(DISTINCT user_id) FROM events WHERE DATE(created_at) = %s", (filtro_data,))
+        usuarios = cur.fetchone()[0]
 
-    if data_inicio and data_fim:
-        filtro_sql = "AND DATE(created_at) BETWEEN %s AND %s"
-        params = [data_inicio, data_fim]
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'plan_click' AND DATE(created_at) = %s", (filtro_data,))
+        cliques = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'purchase' AND DATE(created_at) = %s", (filtro_data,))
+        compras = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(SUM(valor), 0)
+            FROM events
+            WHERE event = 'purchase' AND DATE(created_at) = %s
+        """, (filtro_data,))
+        faturamento_total = cur.fetchone()[0]
+
+        faturamento_hoje = faturamento_total
+        faturamento_mes = faturamento_total
+    else:
+        cur.execute("SELECT COUNT(DISTINCT user_id) FROM events")
+        usuarios = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'plan_click'")
+        cliques = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM events WHERE event = 'purchase'")
+        compras = cur.fetchone()[0]
+
+        cur.execute("SELECT COALESCE(SUM(valor), 0) FROM events WHERE event = 'purchase'")
+        faturamento_total = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(SUM(valor), 0)
+            FROM events
+            WHERE event = 'purchase'
+            AND DATE(created_at) = CURRENT_DATE
+        """)
+        faturamento_hoje = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(SUM(valor), 0)
+            FROM events
+            WHERE event = 'purchase'
+            AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+        """)
+        faturamento_mes = cur.fetchone()[0]
 
     # =========================
-    # MÉTRICAS
+    # FINANCEIRO DIÁRIO
     # =========================
-    cur.execute(f"""
-        SELECT COUNT(DISTINCT user_id)
-        FROM events
-        WHERE 1=1 {filtro_sql}
-    """, params)
-    usuarios = cur.fetchone()[0]
-
-    cur.execute(f"""
-        SELECT COUNT(*)
-        FROM events
-        WHERE event = 'plan_click' {filtro_sql}
-    """, params)
-    cliques = cur.fetchone()[0]
-
-    cur.execute(f"""
-        SELECT COUNT(*)
-        FROM events
-        WHERE event = 'purchase' {filtro_sql}
-    """, params)
-    compras = cur.fetchone()[0]
-
-    cur.execute(f"""
-        SELECT COALESCE(SUM(valor),0)
-        FROM events
-        WHERE event = 'purchase' {filtro_sql}
-    """, params)
-    faturamento_total = cur.fetchone()[0]
-
-    faturamento_hoje = faturamento_total
-    faturamento_mes = faturamento_total
-
-    # =========================
-    # FINANCEIRO
-    # =========================
-    if data_inicio and data_fim:
+    if filtro_data:
         cur.execute("""
             SELECT 
                 d.data,
@@ -125,13 +131,12 @@ def dashboard():
                 COALESCE(g.facebook, 0),
                 COALESCE(g.outros, 0)
             FROM (
-                SELECT generate_series(%s::date, %s::date, interval '1 day')::date AS data
+                SELECT %s::date AS data
             ) d
             LEFT JOIN (
                 SELECT DATE(created_at) AS data, SUM(valor) AS faturamento
                 FROM events
-                WHERE event = 'purchase'
-                AND DATE(created_at) BETWEEN %s AND %s
+                WHERE event = 'purchase' AND DATE(created_at) = %s
                 GROUP BY DATE(created_at)
             ) f ON f.data = d.data
             LEFT JOIN (
@@ -139,11 +144,10 @@ def dashboard():
                     SUM(CASE WHEN tipo = 'facebook' THEN valor ELSE 0 END) AS facebook,
                     SUM(CASE WHEN tipo = 'outros' THEN valor ELSE 0 END) AS outros
                 FROM gastos
-                WHERE data BETWEEN %s AND %s
+                WHERE data = %s
                 GROUP BY data
             ) g ON g.data = d.data
-            ORDER BY d.data DESC
-        """, (data_inicio, data_fim, data_inicio, data_fim, data_inicio, data_fim))
+        """, (filtro_data, filtro_data, filtro_data))
     else:
         cur.execute("""
             SELECT 
@@ -203,19 +207,99 @@ def dashboard():
     <head>
         <meta charset="UTF-8">
         <title>Dashboard Bot Telegram</title>
+        <style>
+            body {{
+                background:#0f0f12;
+                color:#fff;
+                font-family:Arial;
+            }}
+            .container {{
+                max-width:1200px;
+                margin:auto;
+                padding:30px;
+            }}
+            h1 {{ margin-bottom:30px; }}
+            .cards {{
+                display:grid;
+                grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+                gap:20px;
+            }}
+            .card {{
+                background:#1c1c22;
+                padding:20px;
+                border-radius:12px;
+            }}
+            .card h2 {{ color:#aaa; font-size:14px; }}
+            .card p {{ font-size:28px; margin:10px 0 0; font-weight:bold; }}
+            form {{
+                background:#1c1c22;
+                padding:20px;
+                border-radius:12px;
+                margin:40px 0;
+            }}
+            input, select, button {{
+                padding:10px;
+                margin-right:10px;
+                border-radius:6px;
+                border:none;
+            }}
+            button {{ background:#22c55e; font-weight:bold; }}
+            table {{
+                width:100%;
+                border-collapse:collapse;
+            }}
+            th, td {{
+                padding:12px;
+                border-bottom:1px solid #2a2a30;
+                text-align:center;
+            }}
+            th {{ color:#aaa; }}
+        </style>
     </head>
     <body>
-        <form method="get">
-            <input type="date" name="data_inicio" value="{data_inicio or ''}">
-            <input type="date" name="data_fim" value="{data_fim or ''}">
-            <button>Filtrar</button>
-            <a href="/">Limpar</a>
-        </form>
+        <div class="container">
+            <h1>📊 Dashboard — Bot Telegram VIP</h1>
 
-        <!-- RESTANTE DO HTML CONTINUA IGUAL -->
-        <!-- (mantive tudo como você pediu) -->
+            <!-- 🔹 NOVO: filtro de data -->
+            <form method="get">
+                <input type="date" name="filtro_data" value="{filtro_data or ''}">
+                <button>Filtrar</button>
+                <a href="/" style="color:#aaa;margin-left:10px;">Limpar</a>
+            </form>
 
-        {linhas_financeiro}
+            <div class="cards">
+                <div class="card"><h2>Usuários</h2><p>{usuarios}</p></div>
+                <div class="card"><h2>Cliques</h2><p>{cliques}</p></div>
+                <div class="card"><h2>Compras</h2><p>{compras}</p></div>
+                <div class="card"><h2>Faturamento hoje</h2><p>R$ {faturamento_hoje:.2f}</p></div>
+                <div class="card"><h2>Faturamento mês</h2><p>R$ {faturamento_mes:.2f}</p></div>
+                <div class="card"><h2>Faturamento total</h2><p>R$ {faturamento_total:.2f}</p></div>
+            </div>
+
+            <form method="post">
+                <input type="date" name="data" required>
+                <select name="tipo">
+                    <option value="facebook">Facebook Ads</option>
+                    <option value="outros">Outros gastos</option>
+                </select>
+                <input type="number" step="0.01" name="valor" placeholder="Valor" required>
+                <input type="text" name="descricao" placeholder="Descrição">
+                <button>Salvar gasto</button>
+            </form>
+
+            <table>
+                <tr>
+                    <th>Data</th>
+                    <th>Faturamento</th>
+                    <th>Facebook</th>
+                    <th>Outros</th>
+                    <th>Gastos</th>
+                    <th>Lucro</th>
+                    <th>ROI</th>
+                </tr>
+                {linhas_financeiro}
+            </table>
+        </div>
     </body>
     </html>
     """
